@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#07131f">
+<title>Star Trek Tracker – Backup</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#07131f;color:#eef7ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.wrap{max-width:680px;margin:auto;padding:28px 16px 50px}
+.card{background:#0d2132;border:1px solid #1d4058;border-radius:16px;padding:18px;margin:14px 0}
+h1{font-size:27px;margin:0 0 6px}
+.sub,.muted{color:#91aabd}
+button,.back{display:block;width:100%;border:1px solid #2c5874;background:#183246;color:#eef7ff;border-radius:11px;padding:14px 12px;font-size:16px;font-weight:700;text-align:center;text-decoration:none;margin:10px 0}
+button.primary{background:#23664c;border-color:#65e6a3}
+button.import{background:#5a4a1d;border-color:#d7b95c}
+input[type=file]{display:none}
+.status{min-height:24px;margin-top:12px;padding:10px;border-radius:10px;background:#102b40;color:#b9d3e6}
+.good{border:1px solid #65e6a3}
+.bad{border:1px solid #ff7b7b}
+.small{font-size:13px;line-height:1.5;color:#91aabd}
+code{color:#65e6a3}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🖖 Star Trek Tracker</h1>
+<div class="sub">Backup & återställning • v3.2</div>
+
+<div class="card">
+<h2>Exportera backup</h2>
+<p>Skapar en JSON-fil med alla sparade Tracker-poster som börjar med <code>stTracker.v2.</code>.</p>
+<button class="primary" id="exportBtn">⬇️ Exportera backup</button>
+<div class="small">Filen kan sparas i Filer/iCloud Drive och användas igen på samma eller en annan enhet.</div>
+</div>
+
+<div class="card">
+<h2>Importera backup</h2>
+<p>Välj en backup som skapats av den här sidan. Filen kontrolleras innan något skrivs.</p>
+<button class="import" id="importBtn">⬆️ Välj backupfil</button>
+<input id="fileInput" type="file" accept="application/json,.json">
+<div class="small">Importen skriver endast nycklar med prefixet <code>stTracker.v2.</code>. Övrig localStorage lämnas orörd.</div>
+</div>
+
+<div id="status" class="status">Redo. Inga ändringar har gjorts.</div>
+<a class="back" href="./">← Tillbaka till Star Trek Tracker</a>
+
+<div class="card small">
+<strong>Säkerhetsmodell:</strong> Importen kräver rätt format och prefix. Den raderar inte befintliga Tracker-poster som saknas i backupen; den lägger tillbaka/uppdaterar bara posterna som finns i filen.
+</div>
+</div>
+
+<script>
+(() => {
+  const PREFIX = 'stTracker.v2.';
+  const FORMAT = 'star-trek-tracker-backup';
+  const VERSION = 1;
+  const status = document.getElementById('status');
+  const fileInput = document.getElementById('fileInput');
+
+  function say(msg, ok=true){
+    status.textContent = msg;
+    status.className = 'status ' + (ok ? 'good' : 'bad');
+  }
+
+  function trackerData(){
+    const data = {};
+    for(let i=0;i<localStorage.length;i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith(PREFIX)) data[k] = localStorage.getItem(k);
+    }
+    return data;
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    try{
+      const data = trackerData();
+      const payload = {
+        format: FORMAT,
+        version: VERSION,
+        createdAt: new Date().toISOString(),
+        prefix: PREFIX,
+        entries: data
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+      a.href = url;
+      a.download = 'star-trek-tracker-backup-' + stamp + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1500);
+      say('Backup skapad: ' + Object.keys(data).length + ' sparade Tracker-poster.');
+    }catch(e){
+      say('Kunde inte skapa backup: ' + e.message, false);
+    }
+  });
+
+  document.getElementById('importBtn').addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files && fileInput.files[0];
+    if(!file) return;
+    try{
+      const raw = await file.text();
+      const payload = JSON.parse(raw);
+
+      if(!payload || payload.format !== FORMAT || payload.version !== VERSION ||
+         payload.prefix !== PREFIX || !payload.entries ||
+         typeof payload.entries !== 'object' || Array.isArray(payload.entries)){
+        throw new Error('Filen är inte en giltig Star Trek Tracker-backup.');
+      }
+
+      const entries = Object.entries(payload.entries);
+      if(entries.length === 0) throw new Error('Backupen innehåller inga Tracker-poster.');
+
+      for(const [k,v] of entries){
+        if(typeof k !== 'string' || !k.startsWith(PREFIX))
+          throw new Error('Backupen innehåller en otillåten nyckel.');
+        if(typeof v !== 'string')
+          throw new Error('Backupen innehåller ett ogiltigt värde.');
+      }
+
+      const proceed = confirm(
+        'Giltig backup hittad med ' + entries.length +
+        ' Tracker-poster.\\n\\nImportera dem nu? Befintliga poster som inte finns i backupen raderas inte.'
+      );
+      if(!proceed){ say('Import avbruten. Inget ändrades.'); return; }
+
+      for(const [k,v] of entries) localStorage.setItem(k,v);
+      say('Import klar: ' + entries.length + ' Tracker-poster återställdes. Gå tillbaka till trackern och ladda om sidan.');
+    }catch(e){
+      say('Import stoppad: ' + e.message + ' Inget importerades.', false);
+    }finally{
+      fileInput.value = '';
+    }
+  });
+})();
+</script>
+</body>
+</html>
